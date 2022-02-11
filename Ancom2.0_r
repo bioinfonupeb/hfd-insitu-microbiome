@@ -1,0 +1,199 @@
+# Utilizing ANCOM2.0 for the HFD dataset ####
+#devtools::install_github("jbisanz/qiime2R")
+#if (!requireNamespace("BiocManager", quietly = TRUE))
+# install.packages("BiocManager")
+#BiocManager::install()
+
+#install.packages("rlang")
+#BiocManager::install("phyloseq")
+#BiocManager::install("data.table")
+#BiocManager::install("survival")
+ 
+
+  library(qiime2R)
+  library(tidyverse)
+  library(exactRankTests)
+  library(coin)
+  library(nlme)
+  library(dplyr)
+  library(ggplot2)
+  library(compositions)
+  library(phyloseq)
+
+
+source("/home/rstudio/sylvana/sepp_gg/ancom_v2.1.R")
+
+setwd("/home/rstudio/sylvana/sepp_gg/R")
+list.files()
+#gg_features <- read_qza("ggtable.qza") # Original
+gg_features <- read_qza("../a../ancom-qiime2/species-collapse.qza")
+# taxonomy_features <- read_qza("../taxonomy.qza")
+metadata <- read_tsv("new_metadata.tsv")[-1,]
+
+
+gg <- as.data.frame(gg_features[["data"]])
+#gg <- taxa_sumry2
+meta_data = metadata %>% rename(Sample.ID = `#SampleID`)
+
+# ===== Step 1: Data preprocessing =====
+
+# Select vars
+feature_table = gg;
+sample_var = "Sample.ID";
+group_var = 'diet';
+
+# Parameters
+out_cut = 0;
+zero_cut = 0.90;
+lib_cut = 1;
+neg_lb = FALSE
+
+# Do preprocess
+prepro = feature_table_pre_process(feature_table, meta_data, sample_var, group_var, out_cut, zero_cut, lib_cut,neg_lb)
+
+# Select alias
+feature_table = prepro$feature_table
+meta_data = prepro$meta_data
+struc_zero = prepro$structure_zeros
+
+# ===== Step 2: ANCOM, but better (adjusting for LSdiet) =====
+
+# Select vars
+main_var = "diet";
+adj_formula = "Individual";
+rand_formula = NULL;
+#adj_formula = NULL; rand_formula = "~ 1 | LSdiet"
+#adj_formula = NULL; rand_formula = "~ 1 | Individual"; control = list(msMaxIter = 50)
+
+# Parameters
+p_adj_method = "BH";
+alpha = 0.05;
+
+# Execute ANCOM
+res = ANCOM(feature_table, meta_data, struc_zero, main_var, p_adj_method, alpha, adj_formula, rand_formula);
+
+# Write outputs from ANCOM
+#write_csv(res$out, "LSdiet_gg.csv");
+
+# Write outputs from ANCOM
+write_csv(res$out, "diet_gg.csv");
+
+# Write outputs data field from READ QZA dataframe
+#write.csv(gg, 'gg.csv', row.names=TRUE);
+
+# ===== Step 3: Volcano Plot =====
+
+n_taxa = ifelse(is.null(struc_zero), nrow(feature_table), sum(apply(struc_zero, 1, sum) == 0))
+
+# Cutoff values for declaring differentially abundant taxa
+cut_off = c(0.9 * (n_taxa -1), 0.8 * (n_taxa -1), 0.7 * (n_taxa -1), 0.6 * (n_taxa -1))
+names(cut_off) = c("detected_0.9", "detected_0.8", "detected_0.7", "detected_0.6")
+# Annotation data
+dat_ann = data.frame(x = min(res$fig$data$x), y = cut_off["detected_0.9"], label = "W[0.9]")
+
+# Plot Figures
+fig = res$fig + geom_hline(yintercept = cut_off["detected_0.9"], linetype = "dashed") + 
+  geom_text(data = dat_ann, aes(x = x, y = y, label = label), 
+            size = 4, vjust = -0.5, hjust = 0, color = "orange", parse = T) +
+  theme_classic();
+fig;
+# Save Plot Figure
+ggsave(filename = "ancom_volcano_plot_diet.svg", plot = fig, device = "svg", width = 180, height = 100, units = "mm", dpi = 100)
+
+# Save Plot Figure
+ggsave(filename = "ancom_volcano_plot_diet.svg", plot = fig, device = "svg", width = 300, height = 100, units = "mm", dpi = 150)
+
+# ===== Step 4: Pair Wise Stats =====
+
+# Plotting relative abundances of each ANCOM-identified taxon ####
+# Select OTUs with TRUE W value
+# TODO
+# cutoffW(level=0.9)
+
+t_aux = res[['out']]
+features = c()
+t_09 = 3
+t_08 = 4
+t_07 = 5
+t_06 = 6
+for(i in 1:(dim(t_aux)[1])) {
+  if(t_aux[i, t_09] == TRUE &  t_aux[i, 2] != Inf) {
+    #print(t_aux[i, 1]);
+    #print(t_aux[i, 3]);
+    #flush.console();
+    features = c(features, t_aux[i, 1])
+  }
+}
+
+features
+
+
+# Prepare new Dataframe
+
+# All
+# gg <- joinByTax(gg_features[["data"]], tax_level=3)
+
+rel <- as.data.frame(t(gg[features,]));
+rel$Sample.ID <- rownames(rel);
+merged <- as.data.frame(merge(rel, meta_data, by.u = "Sample.ID"));
+merged$LSdiet <- factor(merged$LSdiet, levels = c('CD-M', 'CD-L', 'CD-A', 'HFD-M', 'HFD-L', 'HFD-A'))
+
+for(i in 1:length(features)) {
+  merged[,features[i]] = ave(merged[,features[i]], merged$LSdiet, FUN = function(x){x / sum(x)})
+}
+merged
+
+merged[merged=="NaN"] = 0
+merged$LSdiet <- factor(merged$LSdiet, levels = c('CD-M', 'CD-L', 'CD-A','HFD-M', 'HFD-L', 'HFD-A'))
+
+# Plotting logarithm-transformed relative abundances ####
+for(i in 1:length(features)) {
+#for(i in 1:1) {
+  otu = 100*(merged[,features[i]]) + 1
+  title = str_replace(features[i], ';o_', ';\no_')
+  title = str_replace(title, ';g_', ';\ng_')
+  fig1 <- ggplot(merged, aes(x=LSdiet, y=log(otu), group=LSdiet, fill=diet)) + theme_classic() + geom_boxplot() + scale_fill_manual(values=c("lightblue3", "indianred")) + ylab('log_10(% relative abundance)') + ggtitle(title) + stat_boxplot(geom = "errorbar", width = 0.3);
+  print(fig1);
+  
+# + coord_cartesian(ylim=c(-10,0)) + scale_y_continuous(breaks=seq(0,10,2))
+  
+  f_name = sprintf('abd_relative/%03d.svg', i)
+  ggsave(filename=f_name, plot=fig1, device="svg", width=120, height=120, units="mm", dpi=100);
+}
+
+correction <- c("holm", "hochberg", "hommel", "bonferroni", "BH", "BY", "fdr", "none");
+for(i in 1:length(features)) {
+  otu = merged[,features[i]]
+  print(sprintf('======== %03d', i)); print(features[i]);
+  
+  
+  kt = kruskal.test(otu ~ merged$LSdiet, data = merged); print(kt);
+  wt = wilcox.test(otu, as.integer(merged$LSdiet), p.adjust.method=correction[5]); print(wt);
+  wt = pairwise.wilcox.test(otu, merged$LSdiet, p.adjust.method=correction[5], exact=FALSE); print(wt);
+  
+  print('===================='); flush.console();
+}
+
+
+## ======================================
+## Tests
+## ======================================
+
+#stat_box_data <- function(y, upper_limit = max(merged[,features[6]]) * 1.15) {
+#  return( 
+#    data.frame(
+#      y = 0.95 * upper_limit,
+#      label = paste('count =', length(y), '\n',
+#                    'mean =', round(mean(y), 4), '\n')
+#    )
+#  )
+#}
+
+#otu = 1000*(merged[,features[6]])+1
+#title = str_replace(features[6], ';o_', ';\no_')
+#title = str_replace(title, ';g_', ';\ng_')
+#fig1 <- ggplot(merged, aes(x=LSdiet, y=log(otu), group=LSdiet, fill=diet)) + theme_classic() + geom_boxplot() + scale_fill_manual(values=c("lightblue3", "indianred")) + ylab('-log') + #ggtitle(title) + stat_boxplot(geom = "errorbar", width = 0.3);
+#print(fig1);
+
+#+ coord_cartesian(ylim=c(0,0.2)) + scale_y_continuous(breaks=seq(0,0,1)) + scale_y_log10() + stat_summary(fun.data = stat_box_data, geom = "text", hjust = 0.2, vjust = 0.9)
+
