@@ -1,0 +1,223 @@
+import pandas as pd
+import numpy as np
+from scipy import stats
+import seaborn as sns
+import matplotlib as plt
+import scikit_posthocs as sp
+
+# Arquivo de metadata
+map_df_name = "metadata.tsv"
+# Arquivo com OTUs(linhas) X Amostras + Nivel tax (colunas)
+data_tax_df_name = 'ext_otu_table_wTax.tsv'
+obesidade_path = "obesidade.tsv"
+
+map_df = pd.read_csv(map_df_name, header=0, sep='\t', na_values='nan')
+data_tax_df = pd.read_csv(data_tax_df_name, header=0, sep='\t', na_values='nan')
+obesidade_df = pd.read_csv(obesidade_path, header=0, sep='\t')
+
+tax_df = data_tax_df.iloc[:, -7:]
+
+# Index for Life Stage Middle
+index_cd_m = map_df.loc[ (map_df['diet']=='CD') &  (map_df['age']<7) ].index
+index_hfd_m = map_df.loc[ (map_df['diet']=='HFD') &  (map_df['age']<7) ].index
+# Index for Life Stage Late
+index_cd_l = map_df.loc[ (map_df['diet']=='CD') &  (map_df['age'].isin([7,8])) ].index
+index_hfd_l = map_df.loc[ (map_df['diet']=='HFD') &  (map_df['age'].isin([7,8])) ].index
+# Index for Life Stage Adult
+index_cd_a = map_df.loc[ (map_df['diet']=='CD') &  (map_df['age']>=9) ].index
+index_hfd_a = map_df.loc[ (map_df['diet']=='HFD') &  (map_df['age']>=9) ].index
+
+LSdiet_col_index = 7
+map_df.iloc[index_cd_m, LSdiet_col_index] = 'CD-M'
+map_df.iloc[index_hfd_m, LSdiet_col_index] = 'HFD-M'
+
+map_df.iloc[index_cd_l, LSdiet_col_index] = 'CD-L'
+map_df.iloc[index_hfd_l, LSdiet_col_index] = 'HFD-L'
+map_df.iloc[index_cd_a, LSdiet_col_index] = 'CD-A'
+map_df.iloc[index_hfd_a, LSdiet_col_index] = 'HFD-A'
+
+groups_labels = ('CD-M', 'CD-L', 'CD-A', 'HFD-M', 'HFD-L', 'HFD-A')
+
+samples_id = dict()
+samples_id['CD-M'] = map_df.iloc[index_cd_m, 0]
+samples_id['CD-L'] = map_df.iloc[index_cd_l, 0]
+samples_id['CD-A'] = map_df.iloc[index_cd_a, 0]
+samples_id['HFD-M'] = map_df.iloc[index_hfd_m, 0]
+samples_id['HFD-L'] = map_df.iloc[index_hfd_l, 0]
+samples_id['HFD-A'] = map_df.iloc[index_hfd_a, 0]
+
+from utils import count_groups_by_tax
+groups = count_groups_by_tax(2, 'Firmicutes', samples_id, data_tax_df, to_print=False)
+# count_groups_by_tax(2, 'Firmicutes', samples_id, data_tax_df)
+
+# from utils import get_top_expressives
+def get_all_tax_from_level(samples, tax_level=1):
+    col = 'tax_level_' + str(tax_level)
+    return samples[col].unique()
+
+
+def get_top_expressives(samples, tax_level=1, top=2):
+    col = 'tax_level_' + str(tax_level)
+    g1_columns = [col for col in samples if col.startswith('c_')]
+    g2_columns = [col for col in samples if col.startswith('o_')]
+    all_tax = get_all_tax_from_level(samples, tax_level=tax_level)
+    L = list()
+    for tax in all_tax:
+        if type(tax) == str:
+            S = samples[samples[col] == tax]
+            mg1 = S[g1_columns].sum().mean()
+            mg2 = S[g2_columns].sum().mean()
+            L.append((tax, mg1, mg2))
+            # print(tax)
+            # print('C = {} | O = {}'.format(mg1, mg2))
+            # print('='*20)
+    L = np.array(L)
+    print(L[:,1].argmin())
+    print(L)
+    print('='*50)
+    for i in range(top):
+        ind1 = np.argmax(L[:, 1:], axis=0)
+        print(ind1, L[ind1])
+            
+            
+get_top_expressives(data_tax_df, tax_level=2, top=2)
+
+def get_ratio_between_tax_groups(tax_level, otus_counts, group, samples):
+    col = 'tax_level_'+str(tax_level)
+    tax_groups = samples[col].unique()
+    tax_group_count = dict()
+    ratios = dict()
+    for tax in tax_groups:
+        S = samples[samples[col]==tax]
+        # print('Number of different {} = {}'.format(tax, len(S)))
+        all_sums = S[otus_counts].sum()
+        total_sum = sum(all_sums)
+        # print(group)
+        # print(all_sums)
+        # print(total_sum)
+        tax_group_count[tax] = total_sum
+    total = sum([ x for x in tax_group_count.values() ])
+    for tax in tax_groups:
+        ratio = float(tax_group_count[tax]) / total
+        ratios[tax] = ratio
+    return ratios
+
+for group in groups_labels:
+    ratios = get_ratio_between_tax_groups(2, samples_id[group], group, data_tax_df)
+    for k, v in ratios.items():
+        print('{} Ratio for {} = {:.4f}'.format(group, k, v))
+    print('*'*20)
+    
+    def get_fb_ratio(otus_counts, samples):
+    col = 'tax_level_'+str(2)
+    firmicutes_otus = samples[samples[col]=='Firmicutes']
+    bacteroidetes_otus = samples[samples[col]=='Bacteroidetes']
+    firmicutes_otus_sums = firmicutes_otus[otus_counts].sum()
+    bacteroidetes_otus_sums = bacteroidetes_otus[otus_counts].sum()
+    firmicutes_sums = sum(firmicutes_otus_sums)
+    bacteroidetes_sum = sum(bacteroidetes_otus_sums)
+    ratio_fb = float(firmicutes_sums) / bacteroidetes_sum
+    all_sum = firmicutes_sums + bacteroidetes_sum
+    ratio_f = float(firmicutes_sums) / all_sum 
+    ratio_b = float(bacteroidetes_sum) / all_sum
+    return ratio_fb, ratio_f, ratio_b, firmicutes_otus_sums, bacteroidetes_otus_sums
+
+group_values = dict()
+for group in groups_labels:
+    group_values[group] = list()
+    ratio_fb, ratio_f, ratio_b, firmicutes_otus_sums, bacteroidetes_sum = get_fb_ratio(samples_id[group], data_tax_df)
+    print('F/B ratio in {} = {:.4f}'.format(group, ratio_fb))
+    print('F ratio in {} = {:.4f}'.format(group, ratio_f))
+    print('B ratio in {} = {:.4f}'.format(group, ratio_b))
+    for i in firmicutes_otus_sums.index:
+        total = firmicutes_otus_sums[i] + bacteroidetes_sum[i]
+        fb = float(firmicutes_otus_sums[i]) / total
+        group_values[group].append(fb)
+    group_serie = pd.Series(group_values[group])
+    print("Describe {}".format(group))
+    print(group_serie.describe())
+    
+    import matplotlib.pyplot as plt
+aux = list()
+for group in groups_labels:
+    print('Number of samples for {} = {}'.format(group, len(group_values[group])))
+    # plt.figure()
+    sns.distplot(group_values[group])
+    for o in group_values[group]:
+        aux.append([group, o])
+    
+ndf = pd.DataFrame(data=aux, columns=('Group', 'LB'))
+print(ndf)
+
+from scipy import stats
+kruskal_wallis = stats.kruskal(*group_values.values())
+print('%.50f' % kruskal_wallis[1])
+
+posthoc_test_pairs = sp.posthoc_conover(ndf, val_col='LB', group_col='Group', p_adjust = 'holm')
+
+N = len(groups_labels)
+kruskal_values = np.zeros((N, N))
+p_values = np.zeros((N, N))
+for i in range(N):
+    for j in range(i, N):
+        stat = stats.kruskal(groups[groups_labels[i]], groups[groups_labels[j]])
+        kruskal_values[i, j] = kruskal_values[j, i] = stat[0]
+        p_values[i, j] = p_values[j, i] = stat[1]
+        print('Stats between {} and {} = {}'.format(groups_labels[i], groups_labels[j], stat))
+        
+print(obesidade_df)
+obesidade_df.to_csv('fb_ratio_obesidade.csv')
+
+# Select weights from last week 
+weights_last_week = map_df[map_df['weight']>100][['#SampleID', 'weight']]
+col = 'tax_level_'+str(2)
+firmicutes_otus = data_tax_df[data_tax_df[col]=='Firmicutes']
+bacteroidetes_otus = data_tax_df[data_tax_df[col]=='Bacteroidetes']
+fbs = list()
+for i in weights_last_week['#SampleID']:
+    fb = float(firmicutes_otus[i].sum()) / float(bacteroidetes_otus[i].sum())
+    fbs.append(fb)
+    # print(i, fb)
+weights_last_week['fb'] = fbs
+g1 = weights_last_week[weights_last_week['#SampleID'].str.startswith('c')]
+g2 = weights_last_week[weights_last_week['#SampleID'].str.startswith('o')]
+
+# print(weights_last_week['weight'].corr(weights_last_week['fb']))
+# print(g1['weight'].corr(g1['fb']))
+# print(g2['weight'].corr(g2['fb']))
+
+print(stats.pearsonr(weights_last_week['weight'], weights_last_week['fb']))
+print(stats.pearsonr(g1['weight'], g1['fb']))
+print(stats.pearsonr(g2['weight'], g2['fb']))
+
+obesidade_df['fb'] = weights_last_week['fb'].to_numpy()
+
+g1 = obesidade_df[obesidade_df['Unnamed: 0'].str.startswith('c')]
+g2 = obesidade_df[obesidade_df['Unnamed: 0'].str.startswith('o')]
+
+for h in obesidade_df.columns[2:-1]:
+    print('> (c & o) Correlations FB | {}'.format(h))
+    print(stats.pearsonr(obesidade_df[h], obesidade_df['fb']))
+    print('> (c) Correlations FB | {}'.format(h))
+    print(stats.pearsonr(g1[h], g1['fb']))
+    print('> (o) Correlations FB | {}'.format(h))
+    print(stats.pearsonr(g2[h], g2['fb']))
+    print('='*30)
+
+def find_second_point(slope,x0,y0,x1,y1):
+    q = y0 - (slope*x0)
+    new_x = x1
+    new_y = (slope*new_x) + q
+
+    return new_x, new_y
+
+N = len(obesidade_df.columns)
+colors = {'c':'blue', 'o':'red'}
+for i in range(2, N-1):
+    for j in range(i+1, N):
+        plt.figure()
+        ax = obesidade_df.plot.scatter(x=obesidade_df.columns[i], y=obesidade_df.columns[j], c=obesidade_df['Class'].apply(lambda x: colors[x]))
+        plt.show()
+
+#obesidade_df.to_clipboard(sep=',')
+
