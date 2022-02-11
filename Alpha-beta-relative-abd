@@ -1,0 +1,142 @@
+#Pre-processing of sequence read
+#The normalized amplicon pool for the 16S rRNA tageting the V3/V4 region was sequenced on an Illumina MiSeq 
+#run by using V3 chemistry and 600 cycle, 2 x 300-bp paired-end sequencing. All sequencing and library preparation 
+#were conducted at the University of Colorado Boulder BioFrontiers Next-Gen Sequencing core facility.
+
+#16S rRNA importing, demultiplexing and creating phylogenic tree with data into QIIME2-2020.2
+#Login into the virtual machine avaiable at the Univerity of Ouro Preto (UFOP) facility, and load the necessary
+#interface of QIIME2
+​
+#Copy and rename files into the local folder
+#Import renamed raw files into QIIME2 as artifact (.qza)
+#Means that the raw sequences from Illumina will be imported into the program
+​
+qiime tools import \
+--type EMPPairedEndSequences \
+--input-path raw_sequences \
+--output-path paired-end-sequences.qza
+
+#Next step is to demultiplex the sequences (~2-3h)
+#Demux will be done based on the nucleotides barcoded
+#BarcodeSequence was described as a column for this metadata file
+​
+qiime demux emp-paired \
+--m-barcodes-file metadata.tsv \
+--m-barcodes-column BarcodeSequence \
+--i-seqs paired-end-sequences.qza \
+--p-no-golay-error-correction --o-per-sample-sequences demux.qza \
+--o-error-correction-details error_details.qza 
+#Summarize the demultiplexed reads 
+​
+qiime demux summarize --i-data demux.qza --o-visualization demux.qzv
+#Generate a tree for downstream phylogenetic diversity analyzes using SEPP classifier:SaTé-enabled phylogenetic 
+#placement (GreenGenes reference)
+​
+wget \
+  -O "sepp-refs-gg-13-8.qza" \
+  "https://data.qiime2.org/2019.10/common/sepp-refs-gg-13-8.qza"
+qiime fragment-insertion sepp \
+--i-representative-sequences rep-seqs.qza \
+--i-reference-database sepp-refs-gg-13-8.qza \
+--o-tree ggtree.qza \
+--o-placements gg_placements.qza \
+--p-threads 8 #depends on your RAM memory, default is 1
+#Remove fragments not present on the SEPP tree (GG)
+#ggtable.qza will be used alpha a beta diversity metrics
+​
+qiime fragment-insertion filter-features \
+--i-table table.qza \
+--i-tree ggtree.qza \
+--o-filtered-table ggtable.qza \
+--o-removed-table removed_ggtable.qza
+#OPTIONAL: visualize the fragments that are not in the phylogenic tree: qza -> qzv
+​
+qiime metadata tabulate \
+--m-input-file removed_ggtable.qza \
+--o-visualization removed_ggtable.qzv
+#Visualize the new table (GG): qza -> qzv
+​
+qiime metadata tabulate \
+--m-input-file ggtable.qza \
+--o-visualization ggtable.qzv
+Rarefaction analysis to check quality measure
+#For alpha diversity
+qiime diversity alpha-rarefaction \
+--i-table ggtable.qza \
+--i-phylogeny ggtree.qza \
+--p-max-depth 5000 \
+--m-metadata-file metadata.tsv \
+--o-visualization gg-alpha-rarefaction.qzv
+​
+#For beta diversity braycurtis (neighbor-joining methods)
+qiime diversity beta-rarefaction --i-table ggtable.qza \
+--p-metric braycurtis \
+--p-clustering-method nj \
+--p-sampling-depth 2434 \
+--m-metadata-file metadata.tsv \
+--i-phylogeny ggtree.qza \
+--o-visualization bc-gg-beta-rarefaction.qzv
+Core diversity analysis and statistics for alpha and beta measures
+#Core diversity analysis on the data: calculating initial diversity metrics (GG)
+qiime diversity core-metrics-phylogenetic \
+--i-table ggtable.qza \
+--i-phylogeny ggtree.qza \
+--p-sampling-depth 2434 \
+--m-metadata-file metadata.tsv \
+--output-dir core-metrics-results
+#Stats for alpha diversity measures
+​
+qiime metadata tabulate \
+--m-input-file metadata.tsv \
+core-metrics-results/shannon_vector.qza \
+core-metrics-results/observed_otus_vector.qza \
+--o-visualization mapping.qzv
+​
+qiime diversity alpha-group-significance \
+--i-alpha-diversity core-metrics-results/observed_otus_vector.qza \
+--m-metadata-file metadata.tsv \
+--o-visualization core-metrics-results/observed_otus_vector.qzv
+​
+qiime diversity alpha-group-significance \
+--i-alpha-diversity core-metrics-results/shannon_vector.qza \
+--m-metadata-file metadata.tsv \
+--o-visualization core-metrics-results/shannon_vector.qzv
+##Stats for alpha diversity measures - Bray-Curtis on diet
+​
+qiime diversity beta-group-significance \
+--i-distance-matrix core-metrics-results/bray_curtis_distance_matrix.qza \
+--m-metadata-file metadata.tsv \
+--m-metadata-column diet \
+--o-visualization core-metrics-results/bray_curtis_diet_significance.qzv \
+--p-pairwise
+​
+##Stats for alpha diversity measures - Bray-Curtis on LSdiet
+​
+qiime diversity beta-group-significance \
+--i-distance-matrix core-metrics-results/bray_curtis_distance_matrix.qza \
+--m-metadata-file metadata.tsv \
+--m-metadata-column LSdiet \
+--o-visualization core-metrics-results/bray_curtis_LSdiet_significance.qzv \
+--p-pairwise
+​
+Assign taxonomy for GreenGenes and create taxa-plots
+#Assign taxonomy (GG)
+#Download classifier gg-13-8-99-515-806-nb-classifier.qza
+​
+wget -O "gg-13-8-99-515-806-nb-classifier.qza" "https://data.qiime2.org/2020.2/common/gg-13-8-99-515-806-nb-classifier.qza"
+qiime feature-classifier classify-sklearn \
+--i-classifier gg-13-8-99-515-806-nb-classifier.qza \
+--i-reads rep-seqs.qza \
+--o-classification taxonomy.qza
+​
+qiime metadata tabulate \
+--m-input-file taxonomy.qza \
+--o-visualization taxonomy.qzv
+​
+#Make taxa bar plots
+​
+qiime taxa barplot \
+--i-table ggtable.qza \
+--i-taxonomy taxonomy.qza \
+--m-metadata-file metadata.tsv \
+--o-visualization taxa-bar-plots.qzv
