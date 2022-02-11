@@ -1,0 +1,414 @@
+# Import packages
+import pandas as pd
+import numpy as np
+from scipy import stats
+import seaborn as sns
+import matplotlib.pyplot as plt
+import re
+import os
+import scipy
+from scipy.stats import pearsonr
+# import scikit_posthocs as sp
+
+from utils import count_groups_by_tax, groups_by_age_and_diet
+
+# Metadata file
+metadata_name = "metadata.tsv"
+# Contains absolute counts for each OTU, and the taxonomy levels (contains relations for animal, week, and group)
+abs_counts_name = 'ext_otu_table_wTax.tsv'
+# Phenotype expressions (contains relations for animal, week, and group)
+phenotype_path = "obesidade.tsv"
+# Genes expressions files paths (contains expressions relations for animal, week, and group)
+gene_names = ('tph2', '5ht1a', 'Sert')
+genes_path = {g:"raw_data/{}.csv".format(g) for g in gene_names}
+
+tax_levels = range(2,8) # Number of each taxonomy level to be used
+tax_prefix = ('p', 'c', 'o', 'f', 'g', 's') # Taxonomy rank prefix
+
+# Metadata dataframe
+metadata_df = pd.read_csv(metadata_name, header=0,sep='\t')
+# Absolute counts dataframe
+abs_counts_df = pd.read_csv(abs_counts_name, header=0, sep='\t', na_values='nan')
+abs_counts_df = abs_counts_df.replace(to_replace="[\[\]]", value='', regex=True)
+# Phenotype expressions dataframe
+phenotype_df = pd.read_csv(phenotype_path, header=0, sep='\t')
+# Genes expressions dataframes
+genes_df = {g: pd.read_csv(p, header=0, sep='\t', na_values='nan') for g, p in genes_path.items()}
+gene_names
+for g in gene_names:
+    genes_df[g][['ID']] = genes_df[g][['ID']].astype('int32')
+    #print(genes_df[g][genes_df[g]['group']=='o'].reset_index())
+    
+print(metadata_df.head(2))
+print('='*50, '\n')
+print(abs_counts_df.head(2))
+print('='*50, '\n')
+print(phenotype_df.head(2))
+print('='*50, '\n')
+for gene in gene_names:
+    print('Dataframe for "{}"'.format(gene))
+    print(genes_df[gene].head(2))
+    print('='*50, '\n')
+
+#Utilitary functions
+def list_all_types_per_tax_level(samples, tax_level=1):
+    col = 'tax_level_' + str(tax_level)
+    unique_names = samples[col].unique()
+    unique_names = [x for x in unique_names if str(x) != 'nan']
+    # unique_names = [re.sub('[\[\]]', '', x) for x in unique_names if str(x) != 'nan']
+    # unique_names = np.unique(unique_names).tolist()
+    return unique_names
+
+def count_total_otus_by_tax(samples, tax, tax_level=3):
+    col = 'tax_level_' + str(tax_level)
+    S = samples[samples[col] == tax[2:]]
+    S = S.iloc[:, 1:-7]
+    total = S.sum()
+    return tax_level, tax, total
+
+def aggregate(counts, level_tax):
+    samples = {x:{'c':{}, 'o':{}} for x in level_tax}
+    for c in counts:
+        for h in c[2].index:
+            tax =  c[1]
+            fields = h.split('_')
+            if fields[1] not in samples[tax][fields[0]]:
+                samples[tax][fields[0]][fields[1]] = [c[2][h]]
+            else:
+                samples[tax][fields[0]][fields[1]].append(c[2][h])
+    for tax in level_tax:
+        for s in samples[tax]['c']:
+            samples[tax]['c'][s] = np.mean(samples[tax]['c'][s]) 
+        for s in samples[tax]['o']:
+            samples[tax]['o'][s] = np.mean(samples[tax]['o'][s]) 
+    return samples
+
+def print_stats_histogram_r(df, fname, figsize=(10, 12), cm=0, mt=0):
+    print('='*10, fname, '='*10)
+    figsize = figsize
+    m_type = ('magma', 'coolwarm')
+    if cm==0:
+        cmap = m_type[mt]
+    else:
+        cmap = "{}_r".format(m_type[mt])
+    plt.figure(figsize=figsize)
+    dpi = 100
+    format = 'svg'
+    sns.set(font_scale=.75)
+    g = sns.heatmap(df, 
+                    annot=False, # Colocar valores nas celulas
+                    square=True, # Usar quadrados ao inves de retangulos
+                    #linewidths=.1,
+                    cmap=cmap,  
+                    xticklabels=True, 
+                    yticklabels=True, 
+                    cbar_kws={'shrink':0.25}, # Tamanho da barra de escala
+                    vmin=-1, # Valor minimo da escala
+                    vmax=1, # Valor maximo da escala
+    )
+    g.set_yticklabels(g.get_yticklabels(), rotation = 0, fontsize = 9)
+    g.set_xticklabels(g.get_xticklabels(), rotation = 90, fontsize = 8)
+    g.set_facecolor('xkcd:white')
+    # fix for mpl bug that cuts off top/bottom of seaborn viz
+    b, t = plt.ylim() # discover the values for bottom and top
+    b += 0.5 # Add 0.5 to the bottom
+    t -= 0.5 # Subtract 0.5 from the top
+    plt.ylim(b, t) # update the ylim(bottom, top) values
+    plt.savefig(fname, dpi=dpi, format=format)
+    plt.show()
+
+def print_stats_histogram_p(df, fname, figsize=(10, 12), cm=0, mt=0, vmin=None, vmax=None):
+    print('='*10, fname, '='*10)
+    figsize = figsize
+    m_type = ('magma', 'coolwarm')
+    if cm==0:
+        cmap = m_type[mt]
+    else:
+        cmap = "{}_r".format(m_type[mt])
+    plt.figure(figsize=figsize)
+    dpi = 100
+    format = 'svg'
+    sns.set(font_scale=.75)
+    g = sns.heatmap(df, 
+                    annot=False, # Colocar valores nas celulas
+                    square=True, # Usar quadrados ao inves de retangulos
+                    #linewidths=.1,
+                    cmap="Blues_r",  
+                    xticklabels=True, 
+                    yticklabels=True, 
+                    cbar_kws={'shrink':0.25}, # Tamanho da barra de escala
+                    vmin=vmin if vmin!=None else .01, # Valor minimo da escala
+                    vmax=vmax if vmax!=None else .05, # Valor maximo da escala
+    )
+    g.set_yticklabels(g.get_yticklabels(), rotation = 0, fontsize = 9)
+    g.set_xticklabels(g.get_xticklabels(), rotation = 90, fontsize = 8)
+    g.set_facecolor('xkcd:white')
+    # fix for mpl bug that cuts off top/bottom of seaborn viz
+    b, t = plt.ylim() # discover the values for bottom and top
+    b += 0.5 # Add 0.5 to the bottom
+    t -= 0.5 # Subtract 0.5 from the top
+    plt.ylim(b, t) # update the ylim(bottom, top) values
+    plt.savefig(fname, dpi=dpi, format=format)
+    plt.show()
+
+#Organize absolute counts of each animal by tax level and tax names
+counts_by_tax_level = {lvl: {} for lvl in tax_levels}
+for lvl, prefix in zip(tax_levels, tax_prefix):
+    names = list_all_types_per_tax_level(abs_counts_df, tax_level=lvl)
+    names = ['{}_{}'.format(prefix, n) for n in names]
+    counts = [count_total_otus_by_tax(abs_counts_df, n, tax_level=lvl) for n in names]
+    counts_by_tax_level[lvl]['names'] = names
+    counts_by_tax_level[lvl]['animals'] = counts
+
+gene = gene_names[0]
+n_animals_c = genes_df[gene][genes_df[gene]['group']=='c'].reset_index()
+n_animals_o = genes_df[gene][genes_df[gene]['group']=='o'].reset_index()
+# print(n_animals_o)
+
+print(counts_by_tax_level[6]['names'])
+
+otus = {lvl: {'c':{}, 'o':{}} for lvl in tax_levels}
+for lvl in tax_levels:
+    otus[lvl]['c'] = pd.DataFrame(columns=counts_by_tax_level[lvl]['names'], index=[x for x in range(len(n_animals_c['ID']))])
+    otus[lvl]['o'] = pd.DataFrame(columns=counts_by_tax_level[lvl]['names'], index=[x for x in range(len(n_animals_o['ID']))])
+    samples = aggregate(counts_by_tax_level[lvl]['animals'], counts_by_tax_level[lvl]['names'])
+    #print(samples)
+    for k_tax, v_tax in samples.items():
+        for k_group, v_group in v_tax.items():
+            for k_mouse, v_mouse in v_group.items():
+                #print(k_group, k_mouse, v_mouse)
+                if k_group == 'c':
+                    i = n_animals_c.index[n_animals_c['ID']==float(k_mouse)].tolist()
+                    if len(i) > 0:
+                        i = i[0]
+                        otus[lvl]['c'][k_tax][i] = v_mouse
+                        #print(otus[lvl]['c'][k_tax][i])
+                elif k_group == 'o':
+                    i = n_animals_o.index[n_animals_o['ID']==float(k_mouse)].tolist()
+                    if len(i) > 0:
+                        i = i[0]
+                        otus[lvl]['o'][k_tax][i] = v_mouse
+                        #print(otus[lvl]['o'][k_tax][i])
+                        
+def setup_df(df, level_tax, otus, gC, gO):
+    headers_tax = level_tax
+    headers = df.columns[2:]
+    matrC = np.zeros((len(headers_tax), len(headers)))
+    matrO = np.zeros((len(headers_tax), len(headers)))
+    matpC = np.zeros((len(headers_tax), len(headers)))
+    matpO = np.zeros((len(headers_tax), len(headers)))
+    cnt1 = 0
+    for i in headers_tax:
+        cnt2 = 0
+        for j in headers:
+            aux_dfC = pd.DataFrame([otus['c'][i], gC[j]]).transpose().dropna()
+            aux_dfO = pd.DataFrame([otus['o'][i], gO[j]]).transpose().dropna()
+            # Correlate population growth with gene expression
+            # === With Pearson
+            #val_statsC = stats.pearsonr(aux_dfC.iloc[:,0], aux_dfC.iloc[:,1])
+            #val_statsO = stats.pearsonr(aux_dfO.iloc[:,0], aux_dfO.iloc[:,1])
+            # === With Spearman
+            val_statsC = stats.spearmanr(aux_dfC.iloc[:,0], aux_dfC.iloc[:,1])
+            val_statsO = stats.spearmanr(aux_dfO.iloc[:,0], aux_dfO.iloc[:,1])
+            matrC[cnt1][cnt2] = val_statsC[0]
+            matrO[cnt1][cnt2] = val_statsO[0]
+            matpC[cnt1][cnt2] = val_statsC[1]
+            matpO[cnt1][cnt2] = val_statsO[1]
+            cnt2+=1
+        cnt1+=1
+    dfrC = pd.DataFrame.from_records(matrC, columns=headers, index=headers_tax).dropna()
+    dfrO = pd.DataFrame.from_records(matrO, columns=headers, index=headers_tax).dropna()
+    dfpC = pd.DataFrame.from_records(matpC, columns=headers, index=headers_tax).dropna()
+    dfpO = pd.DataFrame.from_records(matpO, columns=headers, index=headers_tax).dropna()
+    dfrC.drop('mitochondria', inplace=True, errors='ignore')
+    dfrO.drop('mitochondria', inplace=True, errors='ignore')
+    dfpC.drop('mitochondria', inplace=True, errors='ignore')
+    dfpO.drop('mitochondria', inplace=True, errors='ignore')
+    return (dfrC, dfrO, dfpC, dfpO)
+
+# Read EPM times excel file 
+epm_times = pd.read_excel(os.path.join('.','raw_data', 'EPM_tempo.xlsx'))
+epm_times
+counts_by_tax_level[2]['animals']
+def transform_counts_to_df(raw_dict):
+    name = raw_dict[1][2:]
+    tmp_series = raw_dict[2]
+    # Select indexes for adults
+    idx_adults = [x for x in tmp_series.index if int(x.split('_')[-1]) >= 8]
+    df = pd.DataFrame({'idx': tmp_series[idx_adults].index, 'cnt': tmp_series[idx_adults].values})
+    df[['group', 'animal_idx', 'week']] = df['idx'].str.split('_', expand=True)
+    return df
+
+def sum_adults_abundances(df, prefix):
+    df = df.groupby(['animal_idx']).sum().reset_index()
+    df['animal_idx'] = df[['animal_idx']].apply(pd.to_numeric)
+    df = df.sort_values('animal_idx')
+    rows = [(''.join([prefix, str(i[1]['animal_idx'])]), i[1]['cnt']) for i in df.iterrows()]
+    return pd.DataFrame(rows, columns=['Animal', 'Abundance'])
+
+for tax_level in counts_by_tax_level.keys():
+    print(f'Tax level: {tax_level}')
+    for group in ('c', 'o'):
+        indexes = list()
+        correlations_p = list()
+        correlations_r = list()
+        for i in range(len(counts_by_tax_level[tax_level]['animals'])):    
+    #         print(counts_by_tax_level[tax_level]['animals'][i][1])
+            tmp_df = transform_counts_to_df(counts_by_tax_level[tax_level]['animals'][i])
+            abundance_df = sum_adults_abundances(tmp_df[tmp_df['group']==group], prefix=group)
+#             abundance_df = pd.concat([c_abundances, o_abundances], axis=0, ignore_index=True)
+            corr_result_p = abundance_df['Abundance'].corr(epm_times['Time_OA'], method=lambda x,y: pearsonr(x,y)[1])
+            corr_result_r = abundance_df['Abundance'].corr(epm_times['Time_OA'], method=lambda x,y: pearsonr(x,y)[0])
+            if np.isnan(corr_result_p):
+                corr_result = np.nan
+                continue
+            indexes.append(counts_by_tax_level[tax_level]['animals'][i][1][2:])
+            correlations_p.append(corr_result_p)
+            correlations_r.append(corr_result_r)
+        corr_p_df = pd.DataFrame(correlations_p, columns=['Time_OA'], index=indexes)
+        corr_r_df = pd.DataFrame(correlations_r, columns=['Time_OA'], index=indexes)
+        print(corr_p_df)
+        print(corr_r_df)
+        fname = f'p_test_{tax_level}_{group}.svg'
+        print_stats_histogram_p(corr_p_df, fname, figsize=(5,9), cm=0, mt=1, vmin=0, vmax=1)
+        fname = f'r_test_{tax_level}_{group}.svg'
+        print_stats_histogram_r(corr_r_df, fname, figsize=(5,9), cm=0, mt=1)
+    print('='*10)
+ for group in ('c', 'o'):
+    indexes = list()
+    correlations_p = list()
+    correlations_r = list()
+    for tax_level in counts_by_tax_level.keys():
+        for i in range(len(counts_by_tax_level[tax_level]['animals'])):    
+    #         print(counts_by_tax_level[tax_level]['animals'][i][1])
+            tmp_df = transform_counts_to_df(counts_by_tax_level[tax_level]['animals'][i])
+            abundance_df = sum_adults_abundances(tmp_df[tmp_df['group']==group], prefix=group)
+#             abundance_df = pd.concat([c_abundances, o_abundances], axis=0, ignore_index=True)
+            corr_result_p = abundance_df['Abundance'].corr(epm_times['Time_OA'], method=lambda x,y: pearsonr(x,y)[1])
+            corr_result_r = abundance_df['Abundance'].corr(epm_times['Time_OA'], method=lambda x,y: pearsonr(x,y)[0])
+            if np.isnan(corr_result_p):
+                corr_result = np.nan
+                continue
+            if corr_result_p > 0.05:
+                continue
+            indexes.append(counts_by_tax_level[tax_level]['animals'][i][1])
+            correlations_p.append(corr_result_p)
+            correlations_r.append(corr_result_r)
+    corr_p_df = pd.DataFrame(correlations_p, columns=['Time_OA'], index=indexes)
+    corr_r_df = pd.DataFrame(correlations_r, columns=['Time_OA'], index=indexes)
+    fname = f'p_test_{group}.svg'
+    print_stats_histogram_p(corr_p_df, fname, figsize=(5,9), cm=0, mt=1, vmin=.01, vmax=.05)
+    fname = f'r_test_{group}.svg'
+    print_stats_histogram_r(corr_r_df, fname, figsize=(5,9), cm=0, mt=1)
+    print('='*10)
+   
+   
+   filtered_expression_correlarions = {}
+expression_correlation_by_level = {}
+for lvl in tax_levels:
+    gene_stats_CxO = {}
+    for gene in gene_names:
+        gC = genes_df[gene][genes_df[gene]['group']=='c'].reset_index()
+        gO = genes_df[gene][genes_df[gene]['group']=='o'].reset_index()
+        (dfrC, dfrO, dfpC, dfpO) = setup_df(genes_df[gene], counts_by_tax_level[lvl]['names'], otus[lvl], gC, gO)
+        gene_stats_CxO[gene] = {}
+        gene_stats_CxO[gene]['p'] = {}
+        gene_stats_CxO[gene]['p']['c'] = dfpC
+        gene_stats_CxO[gene]['p']['o'] = dfpO
+        gene_stats_CxO[gene]['r'] = {}
+        gene_stats_CxO[gene]['r']['c'] = dfrC
+        gene_stats_CxO[gene]['r']['o'] = dfrO
+    expression_correlation_by_level[lvl] = gene_stats_CxO
+ 
+ p_limit = .05
+
+df_correlations_rc = pd.DataFrame(columns=gene_names)
+df_correlations_ro = pd.DataFrame(columns=gene_names)
+df_correlations_pc = pd.DataFrame(columns=gene_names)
+df_correlations_po = pd.DataFrame(columns=gene_names)
+
+region = 'cDRD'
+
+for lvl, lvl_items in expression_correlation_by_level.items():
+    # group C
+    df_genes_pc = pd.concat([
+        lvl_items[gene_names[0]]['p']['c'][region], 
+        lvl_items[gene_names[1]]['p']['c'][region],
+        lvl_items[gene_names[2]]['p']['c'][region]
+    ], axis=1, keys=gene_names)
+    df_genes_rc = pd.concat([
+        lvl_items[gene_names[0]]['r']['c'][region], 
+        lvl_items[gene_names[1]]['r']['c'][region],
+        lvl_items[gene_names[2]]['r']['c'][region]
+    ], axis=1, keys=gene_names)
+    
+    filtered_index = df_genes_pc[df_genes_pc<p_limit].dropna(how='all')
+    
+    df_correlations_pc = pd.concat([
+        df_correlations_pc,
+        filtered_index
+    ], axis=0)
+    
+    df_rc = df_genes_rc.loc[filtered_index.index, :]
+    for tax in filtered_index.index:
+        for gene in gene_names:
+            cell = filtered_index.loc[tax, gene]
+            if pd.isna(cell):
+                df_rc.loc[tax, gene] = np.nan
+    
+    df_correlations_rc = pd.concat([
+        df_correlations_rc,
+        df_rc
+    ], axis=0)
+    
+    # group O
+    df_genes_po = pd.concat([
+        lvl_items[gene_names[0]]['p']['o'][region], 
+        lvl_items[gene_names[1]]['p']['o'][region],
+        lvl_items[gene_names[2]]['p']['o'][region]
+    ], axis=1, keys=gene_names)
+    df_genes_ro = pd.concat([
+        lvl_items[gene_names[0]]['r']['o'][region], 
+        lvl_items[gene_names[1]]['r']['o'][region],
+        lvl_items[gene_names[2]]['r']['o'][region]
+    ], axis=1, keys=gene_names)
+    
+    filtered_index = df_genes_po[df_genes_po<p_limit].dropna(how='all')
+    
+    df_correlations_po = pd.concat([
+        df_correlations_po,
+        filtered_index
+    ], axis=0)
+    
+    df_ro = df_genes_ro.loc[filtered_index.index, :]
+    for tax in filtered_index.index:
+        for gene in gene_names:
+            cell = filtered_index.loc[tax, gene]
+            if pd.isna(cell):
+                df_ro.loc[tax, gene] = np.nan
+    df_correlations_ro = pd.concat([
+        df_correlations_ro,
+        df_ro
+    ], axis=0)
+#print(df_correlations_c)
+#print(df_correlations_o)
+
+df_correlations_rc
+
+fname = 'spearman_otus-group_c_region_{}.svg'.format(region)
+print_stats_histogram_r(df_correlations_rc, fname, figsize=(5,9), cm=0, mt=1)
+
+fname = 'spearman_otus-group_o_region_{}.svg'.format(region)
+print_stats_histogram_r(df_correlations_ro, fname, figsize=(5,15), cm=0, mt=1)
+
+print(np.min(np.min(df_correlations_pc)))
+print(np.min(np.min(df_correlations_po)))
+
+fname = 'spearman_otus-group_c-region_{}.svg'.format(region)
+vmin = np.min(np.min(df_correlations_pc))
+print_stats_histogram_p(df_correlations_pc, fname, figsize=(5,9), cm=1, mt=1, vmin=vmin, vmax=.05)
+
+fname = 'spearman_otus-group_o-region_{}.svg'.format(region)
+vmin = np.min(np.min(df_correlations_po))
+print_stats_histogram_p(df_correlations_po, fname, figsize=(5,15), cm=1, mt=1, vmin=vmin, vmax=.05)
+
