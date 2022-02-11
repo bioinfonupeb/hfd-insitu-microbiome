@@ -1,0 +1,74 @@
+# Get collapsed data previous done whitin ANCOM preprocessing - use the filter table
+qiime feature-table filter-features \
+--i-table ggtable.qza \
+--p-min-frequency 2434 \
+--p-min-samples 10 \
+--o-filtered-table table_abund.qza
+
+# We’re also often interested in performing a differential abundance test at a specific taxonomic level. 
+# To do this, we can collapse the features in our FeatureTable[Frequency] at the taxonomic level of interest (using the filtered table_abund.qza), 
+# and then re-run the above steps. In this tutorial, we collapse our feature table at the species level (i.e. level 7 of the Greengenes taxonomy).
+qiime taxa collapse \
+  --i-table table_abund.qza \
+  --i-taxonomy taxonomy.qza \
+  --p-level 7 \
+  --o-collapsed-table species-collapse.qza
+
+qiime taxa collapse \
+  --i-table table_abund.qza \
+  --i-taxonomy taxonomy.qza \
+  --p-level 2 \
+  --o-collapsed-table phylo-collapse.qza
+
+# Create a relative frequency table from collapsed taxa
+qiime feature-table relative-frequency \
+--i-table species-collapse.qza \
+--o-relative-frequency-table species-relfreq-table.qza
+
+qiime feature-table relative-frequency \
+--i-table phylo-collapse.qza \
+--o-relative-frequency-table phylo-relfreq-table.qza
+
+# For some reason, the qiime diversity core-metrics-phylogenetic pipeline returns ans error for creating the PCOA
+# for doing the biplot - create the PCOA from the distance matrix on the core-metrics-results folder
+qiime diversity pcoa \
+--i-distance-matrix bray_curtis_distance_matrix.qza \
+--p-number-of-dimensions 3 \
+--o-pcoa bray_curtis_pcoa_results.qza
+
+# Create the biplot accordingly to the distance of choice (in this case bray-curtis distance matrix)
+qiime diversity pcoa-biplot \
+--i-pcoa bray_curtis_pcoa_results.qza \
+--i-features species-relfreq-table.qza \
+--o-biplot biplot_species_bc.qza
+
+qiime diversity pcoa-biplot \
+--i-pcoa bray_curtis_pcoa_results.qza \
+--i-features phylo-relfreq-table.qza \
+--o-biplot biplot_phylo_bc.qza
+
+# Visualize the biplot on EMPEROR
+qiime emperor biplot \
+--i-biplot biplot_species_bc.qza \
+--m-sample-metadata-file metadata.tsv \
+--p-ignore-missing-samples \
+--p-number-of-features 14 \
+--o-visualization biplot_species_bc_14.qzv \
+# --verbose
+
+qiime emperor biplot \
+--i-biplot biplot_phylo_bc.qza \
+--m-sample-metadata-file metadata.tsv \
+--p-ignore-missing-samples \
+--p-number-of-features 9 \
+--o-visualization biplot_phylo_bc_9.qzv \
+# --verbose
+
+# Export files .qza to visualze the coordenates
+qiime tools export \
+--input-path biplot_species_bc.qza \
+--output-path exported-biplot-species
+
+qiime tools export \
+--input-path biplot_phylo_bc.qza \
+--output-path exported-biplot-phylo
