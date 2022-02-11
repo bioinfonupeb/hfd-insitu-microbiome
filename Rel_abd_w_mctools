@@ -1,0 +1,167 @@
+###Looking at the data with MCToolsR (according to Chris Stamper)
+
+#if (!requireNamespace("BiocManager", quietly = TRUE))
+#  install.packages("BiocManager")
+#BiocManager::install("biomformat")
+#install.packages("yaml") 
+#install.packages("devtools")
+#install.packages("ggplot2")
+#install.packages("purrr")
+#devtools::install_github('leffj/mctoolsr')
+#devtools::install_github("jbisanz/qiime2R")
+
+library(devtools)
+library(mctoolsr)
+library(biomformat)
+library(BiocGenerics)
+library(colorspace)
+library(stringi)
+library(vegan)
+library(ggplot2)
+library(reshape2)
+library(RColorBrewer)
+library(qiime2R)
+library("ggpubr")
+
+setwd("/home/rstudio/sylvana/sepp_gg/mctools")
+getwd()
+list.files()
+
+#loading in work data
+H_OTU <- "/home/rstudio/sylvana/sepp_gg/mctools/new_otu_table_wTax.biom"
+H_map <- '/home/rstudio/sylvana/sepp_gg/mctools/metadata.txt'
+
+##Rarefy to 2434
+Sys.setlocale('LC_ALL','C')
+input <- load_taxa_table(tab_fp=H_OTU, map_fp=H_map)
+input_rar <- single_rarefy(input=input, depth=2434)
+
+print(input_rar)
+table(input_rar$map_loaded$diet)
+table(input_rar$map_loaded$LSdiet)
+
+input_rar[["taxonomy_loaded"]]
+
+data(input_rar)
+head(input_rar)
+
+#rearranging the levels of the variables so they appear in the correct order on figures
+input_rar$map_loaded$LSdiet <- factor(input_rar$map_loaded$LSdiet, levels = c('CD-M', 'CD-L', 'CD-A', 'HFD-M', 'HFD-L', 'HFD-A'))
+
+selected_groups = 'LSdiet'
+
+###top 10 taxa at all taxonomic levels
+#taxa_sumry1 <- summarize_taxonomy(input = input_rar, level = 1, report_higher_tax = F)
+#plot_taxa_bars(tax_table = taxa_sumry1, metadata_map = input_rar$map_loaded, type_header = "diet", num_taxa = 10)
+
+#taxa summary at phylum level
+taxa_sumry2 <- summarize_taxonomy(input = input_rar, level = 2, report_higher_tax = F)
+#taxa_sumry2 = taxa_sumry2[-c(4),]
+fig2 = plot_taxa_bars(tax_table = taxa_sumry2, metadata_map = input_rar$map_loaded, type_header = selected_groups, num_taxa = 10) + theme_classic() + scale_fill_manual(values=c("lightblue3", "indianred", "burlywood", "tan3", "darkslategrey", "aquamarine4", "mistyrose4", "steelblue4", "salmon3", "pink3", "lemonchiffon4", "dimgrey", "hotpink4", "wheat4", "lightseagreen", "red", "darkseagreen", "coral3")) + ylab('Relative Abundace') + ggtitle("Phylum") + theme(plot.title=element_text(family="serif",hjust=0.5,size=18), 
+        axis.line=element_line(color="black"),
+        axis.title.x=element_text(family="serif",size=16,color="black", margin=unit(c(0,0,0,0),"cm")))
+        
+ggsave(filename = "rel_abund_phylum.svg", plot = fig2 , device = "svg", width = 140, height = 100, units = "mm", dpi = 100)
+
+
+#taxa summary at class level
+taxa_sumry3 <- summarize_taxonomy(input = input_rar, level = 3, report_higher_tax = F)
+fig3 = plot_taxa_bars(tax_table = taxa_sumry3, metadata_map = input_rar$map_loaded, type_header = selected_groups, num_taxa = 10) + theme_classic() + scale_fill_manual(values=c("lightblue3", "indianred", "burlywood", "tan3", "darkslategrey", "aquamarine4", "mistyrose4", "steelblue4", "salmon3", "pink3", "lemonchiffon4", "dimgrey", "hotpink4", "wheat4", "lightseagreen", "red", "darkseagreen", "coral3")) + ylab('Relative Abundace') + ggtitle("Class") + 
+  theme(plot.title=element_text(family="serif",hjust=0.5,size=18), 
+        axis.line=element_line(color="black"),
+        axis.title.x=element_text(family="serif",size=16,color="black", margin=unit(c(0,0,0,0),"cm")))
+
+ggsave(filename = "rel_abund_class.svg", plot = fig3 , device = "svg", width = 140, height = 100, units = "mm", dpi = 100)
+
+#taxa summary at order level
+taxa_sumry4 <- summarize_taxonomy(input = input_rar, level = 4, report_higher_tax = F)
+fig4 = plot_taxa_bars(tax_table = taxa_sumry4, metadata_map = input_rar$map_loaded, type_header = selected_groups, num_taxa = 10) + theme_classic() + scale_fill_manual(values=c("lightblue3", "indianred", "burlywood", "tan3", "darkslategrey", "aquamarine4", "mistyrose4", "steelblue4", "salmon3", "pink3", "lemonchiffon4", "dimgrey", "hotpink4", "wheat4", "lightseagreen", "red", "darkseagreen", "coral3")) + ylab('Relative Abundace') + ggtitle("Order") + 
+  theme(plot.title=element_text(family="serif",hjust=0.5,size=18), 
+        axis.line=element_line(color="black"),
+        axis.title.x=element_text(family="serif",size=16,color="black", margin=unit(c(0,0,0,0),"cm")))
+
+ggsave(filename = "rel_abund_order.svg", plot = fig4 , device = "svg", width = 140, height = 100, units = "mm", dpi = 100)
+
+#taxa summary at family level
+taxa_sumry5 <- summarize_taxonomy(input = input_rar, level = 5, report_higher_tax = F)
+taxa_sumry5 = taxa_sumry5[-c(1, 2),]
+for(i in 1:ncol(taxa_sumry5)) {
+  taxa_sumry5[[i]] = taxa_sumry5[[i]]/sum(taxa_sumry5[[i]])
+}
+fig5 = plot_taxa_bars(tax_table = taxa_sumry5, metadata_map = input_rar$map_loaded, type_header = selected_groups, num_taxa = 10) + theme_classic() + scale_fill_manual(values=c("lightblue3", "indianred", "burlywood", "tan3", "darkslategrey", "aquamarine4", "mistyrose4", "steelblue4", "salmon3", "pink3", "lemonchiffon4", "dimgrey", "hotpink4", "wheat4", "lightseagreen", "red", "darkseagreen", "coral3")) + ylab('Relative Abundace') + ggtitle("Family") + 
+  theme(plot.title=element_text(family="serif",hjust=0.5,size=18), 
+        axis.line=element_line(color="black"),
+        axis.title.x=element_text(family="serif",size=16,color="black", margin=unit(c(0,0,0,0),"cm")))
+print(fig5)
+
+ggsave(filename = "rel_abund_family.svg", plot = fig5 , device = "svg", width = 140, height = 100, units = "mm", dpi = 100)
+
+
+#taxa summary at genus level
+taxa_sumry6 <- summarize_taxonomy(input = input_rar, level = 6, report_higher_tax = F)
+taxa_sumry6 = taxa_sumry6[-c(1, 2),]
+for(i in 1:ncol(taxa_sumry6)) {
+  taxa_sumry6[[i]] = taxa_sumry6[[i]]/sum(taxa_sumry6[[i]])
+}
+fig6 = plot_taxa_bars(tax_table = taxa_sumry6, metadata_map = input_rar$map_loaded, type_header = selected_groups, num_taxa = 10) + theme_classic() + scale_fill_manual(values=c("lightblue3", "indianred", "burlywood", "tan3", "darkslategrey", "aquamarine4", "mistyrose4", "steelblue4", "salmon3", "pink3", "lemonchiffon4", "dimgrey", "hotpink4", "wheat4", "lightseagreen", "red", "darkseagreen", "coral3")) + ylab('Relative Abundace') + ggtitle("Genus") + 
+  theme(plot.title=element_text(family="serif",hjust=0.5,size=18), 
+        axis.line=element_line(color="black"),
+        axis.title.x=element_text(family="serif",size=16,color="black", margin=unit(c(0,0,0,0),"cm")))
+print(fig6)
+
+ggsave(filename = "rel_abund_genus.svg", plot = fig6 , device = "svg", width = 140, height = 100, units = "mm", dpi = 100)
+
+#taxa summary at species level
+taxa_sumry7 <- summarize_taxonomy(input = input_rar, level = 7, report_higher_tax = T)
+taxa_sumry7 = taxa_sumry7[-c(1, 2),] # Unassigned remove
+for(i in 1:ncol(taxa_sumry7)) {
+  taxa_sumry7[[i]] = taxa_sumry7[[i]]/sum(taxa_sumry7[[i]])
+}
+fig7 = plot_taxa_bars(tax_table = taxa_sumry7, metadata_map = input_rar$map_loaded, type_header = selected_groups, num_taxa = 10) + theme_classic() + scale_fill_manual(values=c("lightblue3", "indianred", "burlywood", "tan3", "darkslategrey", "aquamarine4", "mistyrose4", "steelblue4", "salmon3", "pink3", "lemonchiffon4", "dimgrey", "hotpink4", "wheat4", "lightseagreen", "red", "darkseagreen", "coral3")) + ylab('Relative Abundace') + ggtitle("Species") + 
+  theme(plot.title=element_text(family="serif",hjust=0.5,size=18), 
+        axis.line=element_line(color="black"),
+        axis.title.x=element_text(family="serif",size=16,color="black", margin=unit(c(0,0,0,0),"cm")))
+
+print(fig7)
+
+ggsave(filename = "rel_abund_species.svg", plot = fig7 , device = "svg", width = 140, height = 100, units = "mm", dpi = 100)
+
+
+###-------####
+
+for(i in 7:7) {
+  taxa_sumry <- summarize_taxonomy(input=input_rar, level = i, report_higher_tax = F)
+  taxa_sumry = taxa_sumry[-c(1),] # Unassigned remove
+  # Recalculate proportions
+  for(j in 1:ncol(taxa_sumry)) {
+    taxa_sumry[[j]] = taxa_sumry[[j]]/sum(taxa_sumry[[j]])
+  }
+  fig = plot_taxa_bars(tax_table = taxa_sumry, metadata_map = input_rar$map_loaded, type_header=selected_groups, num_taxa = 10)
+  print(fig);
+  f_name = sprintf('bar_plot_tax_level_%d.svg', i);
+  ggsave(filename=f_name, plot=fig, device="svg", width=150, height=150, units="mm", dpi=100);
+}
+
+###--------------Figure arrange--------------#####
+
+
+#Filo + Species
+figure <- ggarrange(fig2, fig7, 
+                    labels = c("g)", "h)"),
+                    ncol = 2, nrow = 1)
+figure
+ggsave(filename = 'rel_abund_filo+species.svg', plot = figure, device ='svg', width = 250, height = 100, units = 'mm', dpi = 100)
+
+#Class + Order
+figure <- ggarrange(fig3, fig4, 
+                    labels = c("g)", "h)"),
+                    ncol = 2, nrow = 1)
+figure
+ggsave(filename = 'rel_abund_c+o.svg', plot = figure, device ='svg', width = 250, height = 100, units = 'mm', dpi = 100)
+
+##Family + Genus
+figure <- ggarrange(fig5, fig6, 
+                    labels = c("g)", "h)"),
+                    ncol = 2, nrow = 1)
+figure
+ggsave(filename = 'rel_abund_f+g.svg', plot = figure, device ='svg', width = 250, height = 100, units = 'mm', dpi = 100)
